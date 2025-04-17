@@ -15,11 +15,20 @@ export default function InvoiceForm() {
   ]);
   const [proAccess, setProAccess] = useState(false);
 
-  // Prüft beim Laden, ob ?paid=success in der URL steht
+  // Prüft nach Rückleitung von PayPal, ob Pro-Zugang gekauft wurde
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("paid") === "success") {
-      setProAccess(true);
+    const sessionId = params.get("session_id");
+    if (sessionId) {
+      fetch(
+        `https://rechnung-backend.onrender.com/paypal/validate?session_id=${sessionId}`
+      )
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.valid) {
+            setProAccess(true);
+          }
+        });
     }
   }, []);
 
@@ -91,6 +100,7 @@ export default function InvoiceForm() {
     doc.save(`Rechnung_${form.rechnungsnummer}.pdf`);
   };
 
+  // Bezahlung mit PayPal starten
   const handlePayPalCheckout = async () => {
     const res = await fetch(
       "https://rechnung-backend.onrender.com/create-checkout-session",
@@ -99,8 +109,8 @@ export default function InvoiceForm() {
         headers: { "Content-Type": "application/json" },
       }
     );
-    const { url } = await res.json();
-    window.location.href = url;
+    const data = await res.json();
+    window.location.href = data.url; // PayPal Weiterleitung
   };
 
   return (
@@ -109,7 +119,7 @@ export default function InvoiceForm() {
         Rechnung erstellen
       </h1>
 
-      {/* Firmen- und Kundenfelder */}
+      {/* Felder */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block">Firma</label>
@@ -149,7 +159,7 @@ export default function InvoiceForm() {
         </div>
       </div>
 
-      {/* Datum & Nummer */}
+      {/* Datum & Rechnungsnummer */}
       <div className="grid grid-cols-2 gap-4 mt-4">
         <div>
           <label className="block">Datum</label>
@@ -206,14 +216,14 @@ export default function InvoiceForm() {
         + Neue Position
       </button>
 
-      {/* Kauf-Button */}
+      {/* Bezahlbutton */}
       {!proAccess && (
         <div className="text-center mt-6">
           <button
             onClick={handlePayPalCheckout}
-            className="bg-yellow-400 text-white px-6 py-2 rounded hover:bg-yellow-500"
+            className="bg-yellow-500 text-white px-6 py-2 rounded hover:bg-yellow-600"
           >
-            💳 Mit PayPal 4,99 € bezahlen
+            💳 Pro-Version kaufen – 4,99 €
           </button>
         </div>
       )}
