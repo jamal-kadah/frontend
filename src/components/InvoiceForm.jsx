@@ -100,17 +100,25 @@ export default function InvoiceForm() {
     doc.save(`Rechnung_${form.rechnungsnummer}.pdf`);
   };
 
-  // Bezahlung mit PayPal starten
   const handlePayPalCheckout = async () => {
-    const res = await fetch(
-      "https://rechnung-backend.onrender.com/create-checkout-session",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+    try {
+      const res = await fetch(
+        "https://backend-o16g.onrender.com/create-checkout-session",
+        { method: "POST", headers: { "Content-Type": "application/json" } }
+      );
+      const data = await res.json();
+      console.log("🔥 Checkout session response:", data);
+      // Verifizieren, dass wir eine PayPal‑URL bekommen
+      if (data.url?.includes("paypal.com")) {
+        window.location.href = data.url;
+      } else {
+        alert("Ungültige Checkout‑URL:\n" + JSON.stringify(data));
+        console.error("Ungültige Checkout‑URL:", data);
       }
-    );
-    const data = await res.json();
-    window.location.href = data.url; // PayPal Weiterleitung
+    } catch (e) {
+      console.error("Fehler im Checkout‑Handler:", e);
+      alert("Fehler: " + e.message);
+    }
   };
 
   return (
