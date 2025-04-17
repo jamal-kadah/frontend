@@ -15,39 +15,65 @@ export default function InvoiceForm() {
   ]);
   const [proAccess, setProAccess] = useState(false);
 
-  // Prüft nach Rückleitung von PayPal, ob Pro-Zugang gekauft wurde
+  // ➤ 1) Nach Rückleitung: Capture aufrufen
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get("session_id");
-    if (sessionId) {
-      fetch(
-        `https://rechnung-backend.onrender.com/paypal/validate?session_id=${sessionId}`
-      )
+    const orderId = localStorage.getItem("paypal_orderId");
+    if (sessionId && orderId) {
+      fetch("https://backend-o16g.onrender.com/capture-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, sessionId }),
+      })
         .then((res) => res.json())
         .then((data) => {
-          if (data.valid) {
+          if (data.success) {
             setProAccess(true);
+            localStorage.removeItem("paypal_orderId");
+            localStorage.removeItem("paypal_sessionId");
+          } else {
+            console.error("Capture-Fehler:", data.error);
           }
-        });
+        })
+        .catch((err) => console.error("Capture-Request fehlgeschlagen:", err));
     }
   }, []);
 
   const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
-
-  const handlePosChange = (i, field, value) => {
-    const newPos = [...positions];
-    newPos[i][field] = field === "beschreibung" ? value : parseFloat(value);
-    setPositions(newPos);
+  const handlePosChange = (i, field, val) => {
+    const ps = [...positions];
+    ps[i][field] = field === "beschreibung" ? val : parseFloat(val);
+    setPositions(ps);
   };
-
   const addPosition = () =>
     setPositions([...positions, { beschreibung: "", menge: 1, preis: 0 }]);
-
   const calcSum = () => {
     const netto = positions.reduce((sum, p) => sum + p.menge * p.preis, 0);
     const mwst = netto * 0.19;
     return { netto, mwst, brutto: netto + mwst };
+  };
+
+  // ➤ 2) Checkout starten
+  const handlePayPalCheckout = async () => {
+    try {
+      const res = await fetch(
+        "https://backend-o16g.onrender.com/create-checkout-session",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+      const { url, orderId, sessionId } = await res.json();
+      console.log("▶️ Checkout session:", { url, orderId, sessionId });
+      localStorage.setItem("paypal_orderId", orderId);
+      localStorage.setItem("paypal_sessionId", sessionId);
+      window.location.href = url;
+    } catch (e) {
+      console.error("Checkout-Fehler:", e);
+      alert("Checkout konnte nicht gestartet werden.");
+    }
   };
 
   const generatePDF = () => {
@@ -62,7 +88,6 @@ export default function InvoiceForm() {
     doc.setFontSize(12);
     doc.text(`Rechnungsnummer: ${form.rechnungsnummer}`, 20, 80);
     doc.text(`Datum: ${form.datum}`, 20, 86);
-
     let y = 100;
     doc.text("Pos", 20, y);
     doc.text("Beschreibung", 35, y);
@@ -70,55 +95,30 @@ export default function InvoiceForm() {
     doc.text("Einzelpreis", 140, y);
     doc.text("Gesamt", 170, y);
     y += 10;
-
     positions.forEach((p, i) => {
-      const gesamt = p.menge * p.preis;
+      const ges = p.menge * p.preis;
       doc.text(String(i + 1), 20, y);
       doc.text(p.beschreibung, 35, y);
       doc.text(String(p.menge), 110, y);
       doc.text(`${p.preis.toFixed(2)} €`, 140, y);
-      doc.text(`${gesamt.toFixed(2)} €`, 170, y);
+      doc.text(`${ges.toFixed(2)} €`, 170, y);
       y += 10;
     });
-
     const { netto, mwst, brutto } = calcSum();
     y += 5;
     doc.text(`Zwischensumme: ${netto.toFixed(2)} €`, 140, y);
     doc.text(`MwSt (19%): ${mwst.toFixed(2)} €`, 140, y + 6);
     doc.text(`Gesamtsumme: ${brutto.toFixed(2)} €`, 140, y + 12);
-
     if (!proAccess) {
       doc.setTextColor(200, 0, 0);
       doc.setFontSize(10);
       doc.text(
-        "Dies ist eine kostenlose Version. Bitte kaufen Sie Pro über PayPal.",
+        "Kostenlose Version. Bitte kaufen Sie Pro über PayPal.",
         20,
         y + 30
       );
     }
-
     doc.save(`Rechnung_${form.rechnungsnummer}.pdf`);
-  };
-
-  const handlePayPalCheckout = async () => {
-    try {
-      const res = await fetch(
-        "https://backend-o16g.onrender.com/create-checkout-session",
-        { method: "POST", headers: { "Content-Type": "application/json" } }
-      );
-      const data = await res.json();
-      console.log("🔥 Checkout session response:", data);
-      // Verifizieren, dass wir eine PayPal‑URL bekommen
-      if (data.url?.includes("paypal.com")) {
-        window.location.href = data.url;
-      } else {
-        alert("Ungültige Checkout‑URL:\n" + JSON.stringify(data));
-        console.error("Ungültige Checkout‑URL:", data);
-      }
-    } catch (e) {
-      console.error("Fehler im Checkout‑Handler:", e);
-      alert("Fehler: " + e.message);
-    }
   };
 
   return (
@@ -126,21 +126,18 @@ export default function InvoiceForm() {
       <h1 className="text-2xl font-bold mb-4 text-center">
         Rechnung erstellen
       </h1>
-
-      {/* Felder */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Firmen/Kunde */}
+      <div className="grid md:grid-cols-2 gap-4">
         <div>
-          <label className="block">Firma</label>
+          <label>Firma</label>
           <input
-            type="text"
             name="firma"
             value={form.firma}
             onChange={handleChange}
             className="input"
           />
-          <label className="block mt-2">Adresse</label>
+          <label className="mt-2">Adresse</label>
           <input
-            type="text"
             name="adresse"
             value={form.adresse}
             onChange={handleChange}
@@ -148,17 +145,15 @@ export default function InvoiceForm() {
           />
         </div>
         <div>
-          <label className="block">Kunde</label>
+          <label>Kunde</label>
           <input
-            type="text"
             name="kunde"
             value={form.kunde}
             onChange={handleChange}
             className="input"
           />
-          <label className="block mt-2">Kundenadresse</label>
+          <label className="mt-2">Kundenadresse</label>
           <input
-            type="text"
             name="kundenadresse"
             value={form.kundenadresse}
             onChange={handleChange}
@@ -166,11 +161,10 @@ export default function InvoiceForm() {
           />
         </div>
       </div>
-
-      {/* Datum & Rechnungsnummer */}
+      {/* Datum/Nummer */}
       <div className="grid grid-cols-2 gap-4 mt-4">
         <div>
-          <label className="block">Datum</label>
+          <label>Datum</label>
           <input
             type="date"
             name="datum"
@@ -180,9 +174,8 @@ export default function InvoiceForm() {
           />
         </div>
         <div>
-          <label className="block">Rechnungsnummer</label>
+          <label>Rechnungsnummer</label>
           <input
-            type="text"
             name="rechnungsnummer"
             value={form.rechnungsnummer}
             onChange={handleChange}
@@ -190,28 +183,27 @@ export default function InvoiceForm() {
           />
         </div>
       </div>
-
       {/* Positionen */}
       <h2 className="text-xl font-semibold mt-6">Positionen</h2>
-      {positions.map((pos, i) => (
+      {positions.map((p, i) => (
         <div key={i} className="grid grid-cols-3 gap-4 mt-2">
           <input
             placeholder="Beschreibung"
-            value={pos.beschreibung}
+            value={p.beschreibung}
             onChange={(e) => handlePosChange(i, "beschreibung", e.target.value)}
             className="input"
           />
           <input
             type="number"
             placeholder="Menge"
-            value={pos.menge}
+            value={p.menge}
             onChange={(e) => handlePosChange(i, "menge", e.target.value)}
             className="input"
           />
           <input
             type="number"
             placeholder="Preis (€)"
-            value={pos.preis}
+            value={p.preis}
             onChange={(e) => handlePosChange(i, "preis", e.target.value)}
             className="input"
           />
@@ -224,14 +216,14 @@ export default function InvoiceForm() {
         + Neue Position
       </button>
 
-      {/* Bezahlbutton */}
+      {/* Kauf-Button */}
       {!proAccess && (
         <div className="text-center mt-6">
           <button
             onClick={handlePayPalCheckout}
             className="bg-yellow-500 text-white px-6 py-2 rounded hover:bg-yellow-600"
           >
-            💳 Pro-Version kaufen – 4,99 €
+            💳 Pro-Version kaufen – 4,99 €
           </button>
         </div>
       )}
